@@ -28,13 +28,15 @@ class AudioDecodeThread (
         Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
 
         // Creating audio decoder
-        val decoder = MediaCodec.createDecoderByType(mimeType)
+        val decoder = MediaCodecExt.createDecoderByType(mimeType)
         val format = MediaFormat.createAudioFormat(mimeType, sampleRate, channelCount)
 
         if (mimeType == MediaFormat.MIMETYPE_AUDIO_AAC) {
             val csd0 = codecConfig ?: getAacDecoderConfigData(MediaCodecInfo.CodecProfileLevel.AACObjectLC, sampleRate, channelCount)
             format.setByteBuffer("csd-0", ByteBuffer.wrap(csd0))
             format.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+        } else if (mimeType == MediaFormat.MIMETYPE_AUDIO_G711_ALAW) {
+
         } else if (mimeType == MediaFormat.MIMETYPE_AUDIO_OPUS) {
             // TODO: Add Opus support
 
