@@ -7,14 +7,22 @@ import android.media.MediaFormat
 import android.util.Log
 import com.alexvas.rtsp.codec.color.ColorConverterImageAndroidX
 
-class VideoDecoderBitmapThread (
+class VideoDecoderBitmapThread(
     mimeType: String,
     rotation: Int, // 0, 90, 180, 270
     videoFrameQueue: VideoFrameQueue,
     videoDecoderListener: VideoDecoderListener,
     private val videoDecoderBitmapListener: VideoDecoderBitmapListener,
     videoDecoderType: DecoderType = DecoderType.HARDWARE
-): VideoDecodeThread(mimeType, 1920, 1080, rotation, videoFrameQueue, videoDecoderListener, videoDecoderType) {
+): VideoDecodeThread(
+    mimeType,
+    1920,
+    1080,
+    rotation,
+    videoFrameQueue,
+    videoDecoderListener,
+    videoDecoderType
+) {
 
     interface VideoDecoderBitmapListener {
         /** Used only when OutputType.BUFFERS is used */
@@ -24,6 +32,7 @@ class VideoDecoderBitmapThread (
     private var colorConverter: ColorConverterImageAndroidX? = null
 
     override fun decoderCreated(mediaCodec: MediaCodec, mediaFormat: MediaFormat) {
+        if (DEBUG) Log.v(TAG, "decoderCreated()")
         mediaCodec.configure(mediaFormat, null, null, 0)
     }
 
@@ -58,6 +67,7 @@ class VideoDecoderBitmapThread (
     }
 
     override fun decoderDestroyed(mediaCodec: MediaCodec) {
+        if (DEBUG) Log.v(TAG, "decoderDestroyed()")
         colorConverter?.apply {
             try {
                 Log.i(TAG, "Releasing color converter...")

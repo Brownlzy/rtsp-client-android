@@ -18,10 +18,10 @@
             layout="@layout/layout_rtsp_params"/>
 
         <CheckBox
-            android:id="@+id/cbVideoStabilization"
-            android:text="Video Stabilization"
+            android:id="@+id/cbVideoFpsStabilization"
+            android:text="Video frame rate stabilization.\nAdd delay up to 100ms for smoother playback. RtspSurfaceView only."
+            android:layout_marginStart="5dp"
             android:checked="false"
-            android:layout_margin="5dp"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content" />
 
@@ -29,7 +29,7 @@
             android:id="@+id/cbExperimentalRewriteSps"
             android:text="Rewrite SPS frames w/ low-latency params (EXPERIMENTAL)"
             android:checked="false"
-            android:layout_margin="5dp"
+            android:layout_marginStart="5dp"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content" />
 

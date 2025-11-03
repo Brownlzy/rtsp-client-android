@@ -16,16 +16,40 @@ class VideoDecoderSurfaceThread(
     videoFrameQueue: VideoFrameQueue,
     videoDecoderListener: VideoDecoderListener,
     videoDecoderType: DecoderType = DecoderType.HARDWARE,
-    enableVideoStabilization: Boolean = true,
+    videoFrameRateStabilization: Boolean = false,
 ) : VideoDecodeThread(
     mimeType, width, height, rotation, videoFrameQueue, videoDecoderListener, videoDecoderType
-){
+) {
+
+    /**
+     * Presentation time (in RTP units converted to microseconds) of the first frame used as the
+     * PTS baseline.
+     */
+    private var streamStartPtsUs: Long? = null
+
+    /**
+     * Monotonic clock timestamp corresponding to streamStartPtsUs, used to map future frames
+     * to real time.
+     */
+    private var playbackStartRealtimeNs: Long? = null
+
+    /**
+     * Timestamp of the most recently released frame to enforce minimum spacing between consecutive
+     * frames.
+     */
+    private var lastFrameReleaseTimeNs: Long = Long.MIN_VALUE
+
+    /**
+     * Last presentation timestamp we processed; used to detect wrap-around or backwards jumps.
+     */
+    private var lastPresentationTimeUs: Long = Long.MIN_VALUE
 
     init {
-        setVideoStabilizationEnabled(enableVideoStabilization)
+        setVideoFrameRateStabilization(videoFrameRateStabilization)
     }
 
     override fun decoderCreated(mediaCodec: MediaCodec, mediaFormat: MediaFormat) {
+        if (DEBUG) Log.v(TAG, "decoderCreated()")
         if (!surface.isValid) {
             Log.e(TAG, "Surface invalid")
         }
@@ -33,21 +57,12 @@ class VideoDecoderSurfaceThread(
         resetFrameTiming()
     }
 
-    override fun releaseOutputBuffer(
+    private fun releaseOutputBufferWithFrameRateStabilization(
         mediaCodec: MediaCodec,
         outIndex: Int,
-        bufferInfo: MediaCodec.BufferInfo,
-        render: Boolean
+        bufferInfo: MediaCodec.BufferInfo
     ) {
-        if (!render || !surface.isValid) {
-            mediaCodec.releaseOutputBuffer(outIndex, false)
-            return
-        }
-
-        if (!isVideoStabilizationEnabled()) {
-            mediaCodec.releaseOutputBuffer(outIndex, true)
-            return
-        }
+        if (DEBUG) Log.v(TAG, "releaseOutputBufferWithFrameRateStabilization(outIndex=$outIndex)")
 
         val ptsUs = bufferInfo.presentationTimeUs
         val nowNs = System.nanoTime()
@@ -108,28 +123,37 @@ class VideoDecoderSurfaceThread(
         lastPresentationTimeUs = ptsUs
     }
 
+    override fun releaseOutputBuffer(
+        mediaCodec: MediaCodec,
+        outIndex: Int,
+        bufferInfo: MediaCodec.BufferInfo,
+        render: Boolean
+    ) {
+        if (DEBUG) Log.v(TAG, "releaseOutputBuffer(outIndex=$outIndex, render=$render)")
+        if (!render || !surface.isValid) {
+            mediaCodec.releaseOutputBuffer(outIndex, false)
+            return
+        }
+
+        if (!hasVideoFrameRateStabilization()) {
+            mediaCodec.releaseOutputBuffer(outIndex, true)
+        } else {
+            releaseOutputBufferWithFrameRateStabilization(mediaCodec, outIndex, bufferInfo)
+        }
+    }
+
     override fun decoderDestroyed(mediaCodec: MediaCodec) {
+        if (DEBUG) Log.v(TAG, "decoderDestroyed()")
         resetFrameTiming()
     }
 
     private fun resetFrameTiming() {
+        if (DEBUG) Log.v(TAG, "resetFrameTiming()")
         streamStartPtsUs = null
         playbackStartRealtimeNs = null
         lastFrameReleaseTimeNs = Long.MIN_VALUE
         lastPresentationTimeUs = Long.MIN_VALUE
     }
-
-    // Presentation time (in RTP units converted to microseconds) of the first frame used as the PTS baseline.
-    private var streamStartPtsUs: Long? = null
-
-    // Monotonic clock timestamp corresponding to streamStartPtsUs, used to map future frames to real time.
-    private var playbackStartRealtimeNs: Long? = null
-
-    // Timestamp of the most recently released frame to enforce minimum spacing between consecutive frames.
-    private var lastFrameReleaseTimeNs: Long = Long.MIN_VALUE
-
-    // Last presentation timestamp we processed; used to detect wrap-around or backwards jumps.
-    private var lastPresentationTimeUs: Long = Long.MIN_VALUE
 
     companion object {
         private val FRAME_DROP_THRESHOLD_NS = TimeUnit.MILLISECONDS.toNanos(80)

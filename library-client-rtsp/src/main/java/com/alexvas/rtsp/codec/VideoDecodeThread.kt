@@ -59,7 +59,7 @@ abstract class VideoDecodeThread (
     @Volatile private var networkLatency = -1
     private var videoDecoderName: String? = null
     private var firstFrameDecoded = false
-    @Volatile private var videoStabilizationEnabled = false
+    @Volatile private var videoFrameRateStabilization = false
 
     fun stopAsync() {
         if (DEBUG) Log.v(TAG, "stopAsync()")
@@ -97,12 +97,13 @@ abstract class VideoDecodeThread (
         return networkLatency
     }
 
-    fun setVideoStabilizationEnabled(enabled: Boolean) {
-        videoStabilizationEnabled = enabled
+    fun setVideoFrameRateStabilization(enable: Boolean) {
+        if (DEBUG) Log.v(TAG, "setVideoFrameRateStabilization(enable=$enable)")
+        videoFrameRateStabilization = enable
     }
 
-    fun isVideoStabilizationEnabled(): Boolean {
-        return videoStabilizationEnabled
+    fun hasVideoFrameRateStabilization(): Boolean {
+        return videoFrameRateStabilization
     }
 
     @SuppressLint("UnsafeOptInUsageError")
@@ -520,7 +521,7 @@ abstract class VideoDecodeThread (
 
     companion object {
         internal val TAG: String = VideoDecodeThread::class.java.simpleName
-        private const val DEBUG = false
+        internal const val DEBUG = false
 
         private val DEQUEUE_INPUT_TIMEOUT_US = TimeUnit.MILLISECONDS.toMicros(500)
         private val DEQUEUE_OUTPUT_BUFFER_TIMEOUT_US = TimeUnit.MILLISECONDS.toMicros(100)

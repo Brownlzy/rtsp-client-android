@@ -279,8 +279,8 @@ class LiveFragment : Fragment() {
                 binding.llRtspParams.etRtspPassword.setText(it)
         }
 
-        binding.cbVideoStabilization.setOnCheckedChangeListener { _, isChecked ->
-            binding.svVideoSurface.videoStabilizationEnabled = isChecked
+        binding.cbVideoFpsStabilization.setOnCheckedChangeListener { _, isChecked ->
+            binding.svVideoSurface.videoFrameRateStabilization = isChecked
         }
 
         binding.cbExperimentalRewriteSps.setOnCheckedChangeListener { _, isChecked ->
@@ -333,7 +333,7 @@ class LiveFragment : Fragment() {
                         userAgent = "rtsp-client-android"
                     )
                     debug = binding.llRtspParams.cbDebug.isChecked
-                    videoStabilizationEnabled = binding.cbVideoStabilization.isChecked
+                    videoFrameRateStabilization = binding.cbVideoFpsStabilization.isChecked
                     start(
                         requestVideo = binding.llRtspParams.cbVideo.isChecked,
                         requestAudio = binding.llRtspParams.cbAudio.isChecked,

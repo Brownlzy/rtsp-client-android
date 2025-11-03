@@ -29,7 +29,7 @@ open class RtspSurfaceView: SurfaceView {
                 videoFrameQueue,
                 videoDecoderListener,
                 videoDecoderType,
-                videoStabilizationEnabled,
+                videoFrameRateStabilization,
             ->
             VideoDecoderSurfaceThread(
                 holder.surface,
@@ -40,7 +40,7 @@ open class RtspSurfaceView: SurfaceView {
                 videoFrameQueue,
                 videoDecoderListener,
                 videoDecoderType,
-                enableVideoStabilization = videoStabilizationEnabled,
+                videoFrameRateStabilization,
             )
         }
     )
@@ -66,9 +66,9 @@ open class RtspSurfaceView: SurfaceView {
         set(value) { rtspProcessor.debug = value }
 
     /** Enables decoder-side playback smoothing. Disabled by default. */
-    var videoStabilizationEnabled: Boolean
-        get() = rtspProcessor.videoStabilizationEnabled
-        set(value) { rtspProcessor.videoStabilizationEnabled = value }
+    var videoFrameRateStabilization: Boolean
+        get() = rtspProcessor.videoFrameRateStabilization
+        set(value) { rtspProcessor.videoFrameRateStabilization = value }
 
     private val surfaceCallback = object: SurfaceHolder.Callback {
         override fun surfaceCreated(holder: SurfaceHolder) {

@@ -34,7 +34,7 @@ class RtspProcessor(
         videoFrameQueue: VideoFrameQueue,
         videoDecoderListener: VideoDecoderListener,
         videoDecoderType: DecoderType,
-        videoStabilizationEnabled: Boolean,
+        videoFrameRateStabilization: Boolean,
     ) -> VideoDecodeThread)
 ) {
 
@@ -112,10 +112,10 @@ class RtspProcessor(
     /**
      * Enables the playback smoothing logic inside the video decoder.
      */
-    var videoStabilizationEnabled: Boolean = false
+    var videoFrameRateStabilization: Boolean = false
         set(value) {
             field = value
-            videoDecodeThread?.setVideoStabilizationEnabled(value)
+            videoDecodeThread?.setVideoFrameRateStabilization(value)
         }
 
     /**
@@ -421,7 +421,7 @@ class RtspProcessor(
                 videoFrameQueue,
                 videoDecoderListener,
                 videoDecoderType,
-                videoStabilizationEnabled,
+                videoFrameRateStabilization,
             )
             videoDecodeThread!!.apply {
                 name = "RTSP video thread [${getUriName()}]"
