@@ -355,6 +355,9 @@ public class RtspClient {
 // a=control:trackID=2
             checkExitFlag(exitFlag);
 
+            if (digestRealmNonce != null) {
+                authToken = getDigestAuthHeader(username, password, "DESCRIBE", uriRtsp, digestRealmNonce.first, digestRealmNonce.second);
+            }
             sendDescribeCommand(outputStream, uriRtsp, cSeq.addAndGet(1), userAgent, authToken);
             status = readResponseStatusCode(inputStream);
             headers = readResponseHeaders(inputStream);
