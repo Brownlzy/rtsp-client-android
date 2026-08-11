@@ -765,9 +765,16 @@ public class RtspClient {
             // Audio
             } else if (sdpInfo.audioTrack != null && header.payloadType == sdpInfo.audioTrack.payloadType) {
                 if (audioParser != null) {
-                    byte[] sample = audioParser.processRtpPacketAndGetSample(data, header.payloadSize);
-                    if (sample != null)
+                    // One RTP packet can hold several complete AAC access
+                    // units back to back (see AacParser's own doc) — emit
+                    // each as its own sample, in order. All share this
+                    // packet's single RTP timestamp rather than each AU's
+                    // own index-delta-derived timing: the decoder's sample-
+                    // rate-driven playback pacing is what actually matters
+                    // for smooth audio, not RTP-timestamp precision per AU.
+                    for (byte[] sample : audioParser.processRtpPacketAndGetSamples(data, header.payloadSize)) {
                         listener.onRtspAudioSampleReceived(sample, 0, sample.length, header.getTimestampMsec());
+                    }
                 }
 
             // Application

@@ -4,10 +4,13 @@ import android.annotation.SuppressLint;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
 import androidx.media3.common.util.ParsableBitArray;
 import androidx.media3.common.util.ParsableByteArray;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 // https://tools.ietf.org/html/rfc3640
 //          +---------+-----------+-----------+---------------+
@@ -34,11 +37,7 @@ public class AacParser extends AudioParser {
     // Number of bits for AAC AU index(-delta), indexed by mode (LBR and HBR)
     private static final int[] NUM_BITS_AU_INDEX = {2, 3};
 
-    // Frame Sizes for AAC AU fragments, indexed by mode (LBR and HBR)
-    private static final int[] FRAME_SIZES = {63, 8191};
-
     private final int _aacMode;
-    private boolean completeFrameIndicator = true;
 
     public AacParser(@NonNull String aacMode) {
         _aacMode = aacMode.equalsIgnoreCase("AAC-lbr") ? MODE_LBR : MODE_HBR;
@@ -47,14 +46,36 @@ public class AacParser extends AudioParser {
         headerScratchBytes = new ParsableByteArray();
     }
 
+    /**
+     * One RTP packet can carry several complete AAC access units back to
+     * back ("multiple AU per packet" mode, RFC 3640 §3.3.6): the AU Header
+     * Section up front holds one (size, index) header per AU, followed by
+     * that many concatenated access units in the Access Unit Data Section.
+     * This is the common case for a low-bitrate stream (small AAC frames,
+     * several packed per RTP packet to cut overhead) — the original
+     * implementation only ever handled exactly one AU per packet and
+     * silently returned an empty array for everything else, which is why
+     * audio-only playback produced a steady stream of real RTP packets but
+     * no actual sound.
+     * <p>
+     * Fragmentation (one AU split across multiple RTP packets, RFC 3640
+     * §3.3.5) is deliberately NOT handled — that needs cross-packet
+     * reassembly state this parser doesn't keep. A low-bitrate/small-frame
+     * stream's AAC frames are far smaller than one RTP packet's payload
+     * capacity, so fragmentation isn't expected in practice; if a
+     * particular AU's declared size runs past what's left in this packet,
+     * that's treated as a sign of fragmentation and the remainder of this
+     * packet is dropped (any AUs already extracted from earlier in the same
+     * packet are still returned).
+     */
     @Override
-    @Nullable
-    public byte[] processRtpPacketAndGetSample(@NonNull byte[] data, int length) {
+    @NonNull
+    public List<byte[]> processRtpPacketAndGetSamples(@NonNull byte[] data, int length) {
         if (DEBUG)
-            Log.v(TAG, "processRtpPacketAndGetSample(length=" + length + ")");
-        int auHeadersCount = 1;
+            Log.v(TAG, "processRtpPacketAndGetSamples(length=" + length + ")");
         int numBitsAuSize = NUM_BITS_AU_SIZES[_aacMode];
         int numBitsAuIndex = NUM_BITS_AU_INDEX[_aacMode];
+        int auHeaderBits = numBitsAuSize + numBitsAuIndex;
 
         ParsableByteArray packet = new ParsableByteArray(data, length);
 
@@ -62,128 +83,44 @@ public class AacParser extends AudioParser {
 //      |AU-headers-length|AU-header|AU-header|      |AU-header|padding|
 //      |                 |   (1)   |   (2)   |      |   (n)   | bits  |
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+- .. -+-+-+-+-+-+-+-+-+-+
-        int auHeadersLength = packet.readShort();//((data[0] & 0xFF) << 8) | (data[1] & 0xFF);
+        int auHeadersLength = packet.readShort();
         int auHeadersLengthBytes = (auHeadersLength + 7) / 8;
+
+        if (auHeadersLength < auHeaderBits || auHeadersLengthBytes > packet.bytesLeft()) {
+            if (DEBUG)
+                Log.w(TAG, "Malformed AU header section (auHeadersLength=" + auHeadersLength + ")");
+            return Collections.emptyList();
+        }
+
+        int auHeadersCount = auHeadersLength / auHeaderBits;
 
         headerScratchBytes.reset(auHeadersLengthBytes);
         packet.readBytes(headerScratchBytes.getData(), 0, auHeadersLengthBytes);
         headerScratchBits.reset(headerScratchBytes.getData());
 
-        int bitsAvailable = auHeadersLength - (numBitsAuSize + numBitsAuIndex);
-
-        if (bitsAvailable > 0) {// && (numBitsAuSize + numBitsAuSize) > 0) {
-            auHeadersCount +=  bitsAvailable / (numBitsAuSize + numBitsAuIndex);
+        int[] auSizes = new int[auHeadersCount];
+        for (int i = 0; i < auHeadersCount; i++) {
+            auSizes[i] = headerScratchBits.readBits(numBitsAuSize);
+            // AU-index (first header) / AU-index-delta (subsequent headers)
+            // — not used for reordering/gap-filling here, only consumed to
+            // keep the bit reader aligned to the next AU-header.
+            headerScratchBits.readBits(numBitsAuIndex);
         }
 
-        if (auHeadersCount == 1) {
-            int auSize = headerScratchBits.readBits(numBitsAuSize);
-            int auIndex = headerScratchBits.readBits(numBitsAuIndex);
-
-            if (completeFrameIndicator) {
-                if (auIndex == 0) {
-                    if (packet.bytesLeft() == auSize) {
-                        return handleSingleAacFrame(packet);
-
-                    } else {
-//                        handleFragmentationAacFrame(packet, auSize);
-                    }
-                }
-            } else {
-//                handleFragmentationAacFrame(packet, auSize);
+        List<byte[]> samples = new ArrayList<>(auHeadersCount);
+        for (int i = 0; i < auHeadersCount; i++) {
+            int auSize = auSizes[i];
+            if (auSize <= 0 || auSize > packet.bytesLeft()) {
+                if (DEBUG)
+                    Log.w(TAG, "AU " + i + "/" + auHeadersCount + " size " + auSize
+                            + " exceeds remaining payload " + packet.bytesLeft() + " — likely fragmented, not supported");
+                break;
             }
-
-        } else {
-            if (completeFrameIndicator) {
-//                handleMultipleAacFrames(packet, auHeadersLength);
-            }
+            byte[] sample = new byte[auSize];
+            System.arraycopy(packet.getData(), packet.getPosition(), sample, 0, auSize);
+            packet.skipBytes(auSize);
+            samples.add(sample);
         }
-//        byte[] auHeader = new byte[length-2-auHeadersLengthBytes];
-//        System.arraycopy(data,2-auHeadersLengthBytes, auHeader,0, auHeader.length);
-//        if (DEBUG)
-//            Log.d(TAG, "AU headers size: " + auHeadersLengthBytes + ", AU headers: " + auHeadersCount + ", sample length: " + auHeader.length);
-//        return auHeader;
-        return new byte[0];
+        return samples;
     }
-
-    private byte[] handleSingleAacFrame(ParsableByteArray packet) {
-        int length = packet.bytesLeft();
-        byte[] data = new byte[length];
-        System.arraycopy(packet.getData(), packet.getPosition(), data,0, data.length);
-        return data;
-    }
-
-//    private static final class AUHeader {
-//        private int size;
-//        private int index;
-//
-//        public AUHeader(int size, int index) {
-//            this.size = size;
-//            this.index = index;
-//        }
-//
-//        public int size() { return size; }
-//
-//        public int index() { return index; }
-//    }
-
-//    /**
-//     * Stores the consecutive fragment AU to reconstruct an AAC-Frame
-//     */
-//    private static final class FragmentedAacFrame {
-//        public byte[] auData;
-//        public int auLength;
-//        public int auSize;
-//
-//        private int sequence;
-//
-//        public FragmentedAacFrame(int frameSize) {
-//            // Initialize data
-//            auData = new byte[frameSize];
-//            sequence = -1;
-//        }
-//
-//        /**
-//         * Resets the buffer, clearing any data that it holds.
-//         */
-//        public void reset() {
-//            auLength = 0;
-//            auSize = 0;
-//            sequence = -1;
-//        }
-//
-//        public void sequence(int sequence) {
-//            this.sequence = sequence;
-//        }
-//
-//        public int sequence() {
-//            return sequence;
-//        }
-//
-//        /**
-//         * Called to add a fragment unit to fragmented AU.
-//         *
-//         * @param fragment Holds the data of fragment unit being passed.
-//         * @param offset The offset of the data in {@code fragment}.
-//         * @param limit The limit (exclusive) of the data in {@code fragment}.
-//         */
-//        public void appendFragment(byte[] fragment, int offset, int limit) {
-//            if (auSize == 0) {
-//                auSize = limit;
-//            } else if (auSize != limit) {
-//                reset();
-//            }
-//
-//            if (auData.length < auLength + limit) {
-//                auData = Arrays.copyOf(auData, (auLength + limit) * 2);
-//            }
-//
-//            System.arraycopy(fragment, offset, auData, auLength, limit);
-//            auLength += limit;
-//        }
-//
-//        public boolean isCompleted() {
-//            return auSize == auLength;
-//        }
-//    }
-
 }
