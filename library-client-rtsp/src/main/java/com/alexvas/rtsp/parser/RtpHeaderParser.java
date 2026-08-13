@@ -117,29 +117,53 @@ public class RtpHeaderParser {
         // 24 01 00 1c 80 c8 00 06  13 9b cf 60
         // 24 02 01 12 80 e1 01 d2  00 07 43 f0
         byte[] header = new byte[RTP_HEADER_SIZE];
-        // Skip 4 bytes (TCP only). No those bytes in UDP.
-        NetUtils.readData(inputStream, header, 0, 4);
-        if (DEBUG && header[0] == 0x24)
-            Log.d(TAG, header[1] == 0 ? "RTP packet" : "RTCP packet");
+        while (true) {
+            // Skip 4 bytes (TCP only). No those bytes in UDP.
+            NetUtils.readData(inputStream, header, 0, 4);
+            if (DEBUG && header[0] == 0x24)
+                Log.d(TAG, header[1] == 0 ? "RTP packet" : "RTCP packet");
 
-        int packetSize = RtpHeader.getPacketSize(header);
-        if (DEBUG)
-            Log.d(TAG, "Packet size: " + packetSize);
+            int packetSize = RtpHeader.getPacketSize(header);
+            if (DEBUG)
+                Log.d(TAG, "Packet size: " + packetSize);
 
-        if (NetUtils.readData(inputStream, header, 0, header.length) == header.length) {
-            RtpHeader rtpHeader = RtpHeader.parseData(header, packetSize);
-            if (rtpHeader == null) {
-                // Header not found. Possible keep-alive response. Search for another RTP header.
-                boolean foundHeader = RtpHeader.searchForNextRtpHeader(inputStream, header);
-                if (foundHeader) {
-                    packetSize = RtpHeader.getPacketSize(header);
-                    if (NetUtils.readData(inputStream, header, 0, header.length) == header.length)
-                        return RtpHeader.parseData(header, packetSize);
-                }
-            } else {
-                return rtpHeader;
+            // header[1] is the interleaved channel number from the "$"
+            // framing prefix (RFC 2326 §10.12). By the pairing this
+            // library's own SETUP requests use ("0-1" video, "2-3" audio),
+            // EVEN channels carry real RTP media and ODD channels carry
+            // RTCP sender/receiver reports — a different packet layout
+            // entirely. RTCP happens to share RTP's version-bits layout, so
+            // without this check an RTCP packet on the odd channel got
+            // silently misparsed as a malformed RTP packet below, corrupting
+            // this stream's byte alignment for everything that follows. In
+            // video mode that mostly self-heals (searchForNextRtpHeader
+            // below finds the next channel-0 marker quickly, since video
+            // traffic is dense) — but that fallback only ever searches for
+            // channel 0, so in audio-only mode (no video/channel-0 traffic
+            // at all) a desync here was permanent: real audio RTP data kept
+            // arriving on channel 2, but the parser could never find its way
+            // back to a valid header again.
+            boolean isRtcpChannel = (header[1] % 2) != 0;
+            if (isRtcpChannel) {
+                NetUtils.readData(inputStream, new byte[packetSize], 0, packetSize);
+                continue;
             }
+
+            if (NetUtils.readData(inputStream, header, 0, header.length) == header.length) {
+                RtpHeader rtpHeader = RtpHeader.parseData(header, packetSize);
+                if (rtpHeader == null) {
+                    // Header not found. Possible keep-alive response. Search for another RTP header.
+                    boolean foundHeader = RtpHeader.searchForNextRtpHeader(inputStream, header);
+                    if (foundHeader) {
+                        packetSize = RtpHeader.getPacketSize(header);
+                        if (NetUtils.readData(inputStream, header, 0, header.length) == header.length)
+                            return RtpHeader.parseData(header, packetSize);
+                    }
+                } else {
+                    return rtpHeader;
+                }
+            }
+            return null;
         }
-        return null;
     }
 }
