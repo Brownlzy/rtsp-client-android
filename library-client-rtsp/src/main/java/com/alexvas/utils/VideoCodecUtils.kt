@@ -338,6 +338,48 @@ object VideoCodecUtils {
         return false
     }
 
+    /** AV1 OBU_SEQUENCE_HEADER type (AV1 spec section 6.2.2). */
+    private const val AV1_OBU_SEQUENCE_HEADER = 1
+
+    /**
+     * AV1 has no NAL units, so keyframes can't be detected the H264/H265 way. Instead, scan
+     * the (already reassembled, explicit-size-field) OBU stream for a Sequence Header OBU:
+     * encoders emit one at the start of each keyframe/GOP, which is the same heuristic other
+     * AV1 RTP stacks (e.g. libwebrtc) use to flag a temporal unit as a keyframe.
+     */
+    fun isAv1KeyFrame(data: ByteArray?, offset: Int, length: Int): Boolean {
+        if (data == null || length <= 0) return false
+        var pos = offset
+        val end = (offset + length).coerceAtMost(data.size)
+        while (pos < end) {
+            val header = data[pos].toInt() and 0xFF
+            val obuType = (header shr 3) and 0xF
+            val hasExtension = (header and 0x04) != 0
+            val hasSizeField = (header and 0x02) != 0
+            var next = pos + (if (hasExtension) 2 else 1)
+            if (!hasSizeField || next >= end) break
+            val leb128 = readLeb128(data, next, end) ?: break
+            if (obuType == AV1_OBU_SEQUENCE_HEADER) return true
+            next = leb128.second + leb128.first.toInt()
+            if (next <= pos) break
+            pos = next
+        }
+        return false
+    }
+
+    private fun readLeb128(data: ByteArray, offset: Int, limit: Int): Pair<Long, Int>? {
+        var value = 0L
+        var pos = offset
+        for (i in 0 until 8) {
+            if (pos >= limit) return null
+            val b = data[pos].toInt() and 0xFF
+            pos++
+            value = value or ((b and 0x7F).toLong() shl (i * 7))
+            if (b and 0x80 == 0) return Pair(value, pos)
+        }
+        return null
+    }
+
     fun getH264NalUnitTypeString(nalUnitType: Byte): String {
         return when (nalUnitType) {
             NAL_SLICE -> "NAL_SLICE"

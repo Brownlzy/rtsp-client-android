@@ -4,7 +4,7 @@ import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 
 enum class VideoCodecType {
-    H264, H265, UNKNOWN
+    H264, H265, AV1, UNKNOWN
 }
 
 enum class AudioCodecType {

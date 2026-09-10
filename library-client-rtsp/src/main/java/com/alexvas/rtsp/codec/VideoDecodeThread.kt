@@ -360,8 +360,9 @@ abstract class VideoDecodeThread (
                                 decoder.queueInputBuffer(inIndex, frame.offset, frame.length, frame.timestampMs, flags)
 
                                 if (frame.isKeyframe) {
-                                    // Obtain width and height from stream
-                                    widthHeightFromStream = try {
+                                    // Obtain width and height from stream. AV1 has no NAL/SPS to
+                                    // parse this way; rely on widthHeightFromDecoder instead.
+                                    widthHeightFromStream = if (frame.codecType == VideoCodecType.AV1) null else try {
                                         VideoCodecUtils.getWidthHeightFromArray(
                                             frame.data,
                                             frame.offset,

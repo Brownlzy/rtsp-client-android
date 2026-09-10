@@ -154,6 +154,7 @@ class RtspProcessor(
                 when (sdpInfo.videoTrack?.videoCodec) {
                     RtspClient.VIDEO_CODEC_H264 -> videoMimeType = MediaFormat.MIMETYPE_VIDEO_AVC
                     RtspClient.VIDEO_CODEC_H265 -> videoMimeType = MediaFormat.MIMETYPE_VIDEO_HEVC
+                    RtspClient.VIDEO_CODEC_AV1 -> videoMimeType = MediaFormat.MIMETYPE_VIDEO_AV1
                 }
                 when (sdpInfo.audioTrack?.audioCodec) {
                     RtspClient.AUDIO_CODEC_AAC -> audioMimeType = MediaFormat.MIMETYPE_AUDIO_AAC
@@ -231,11 +232,21 @@ class RtspProcessor(
             if (DEBUG) Log.v(TAG, "onRtspVideoNalUnitReceived(data.size=${data.size}, length=$length, timestamp=$timestamp)")
 
             val isH265 = videoMimeType == MediaFormat.MIMETYPE_VIDEO_HEVC
-            // Search for NAL_IDR_SLICE within first 1KB maximum
-            val isKeyframe = VideoCodecUtils.isAnyKeyFrame(data, offset, min(length, 1000), isH265)
+            val isAv1 = videoMimeType == MediaFormat.MIMETYPE_VIDEO_AV1
+            val codecType = when (videoMimeType) {
+                MediaFormat.MIMETYPE_VIDEO_AVC -> VideoCodecType.H264
+                MediaFormat.MIMETYPE_VIDEO_HEVC -> VideoCodecType.H265
+                MediaFormat.MIMETYPE_VIDEO_AV1 -> VideoCodecType.AV1
+                else -> VideoCodecType.UNKNOWN
+            }
+            // Search for NAL_IDR_SLICE (or, for AV1, a Sequence Header OBU) within first 1KB maximum
+            val isKeyframe = if (isAv1)
+                VideoCodecUtils.isAv1KeyFrame(data, offset, min(length, 1000))
+            else
+                VideoCodecUtils.isAnyKeyFrame(data, offset, min(length, 1000), isH265)
 
             var videoFrame = FrameQueue.VideoFrame(
-                VideoCodecType.H264,
+                codecType,
                 isKeyframe,
                 data,
                 offset,
@@ -509,7 +520,7 @@ class RtspProcessor(
     private fun getNewLowLatencyFrameFromKeyFrame(frame: FrameQueue.VideoFrame): FrameQueue.VideoFrame {
         try {
             // Support only H264 for now
-            if (frame.codecType == VideoCodecType.H265)
+            if (frame.codecType != VideoCodecType.H264)
                 return frame
 
             nalUnitsFound.clear()

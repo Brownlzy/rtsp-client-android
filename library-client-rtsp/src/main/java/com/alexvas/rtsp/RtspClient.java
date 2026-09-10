@@ -11,6 +11,7 @@ import androidx.annotation.Nullable;
 import com.alexvas.rtsp.parser.AacParser;
 import com.alexvas.rtsp.parser.G711Parser;
 import com.alexvas.rtsp.parser.AudioParser;
+import com.alexvas.rtsp.parser.RtpAv1Parser;
 import com.alexvas.rtsp.parser.RtpH264Parser;
 import com.alexvas.rtsp.parser.RtpH265Parser;
 import com.alexvas.rtsp.parser.RtpHeaderParser;
@@ -195,6 +196,7 @@ public class RtspClient {
 
     public static final int VIDEO_CODEC_H264 = 0;
     public static final int VIDEO_CODEC_H265 = 1;
+    public static final int VIDEO_CODEC_AV1 = 2;
 
     public static class VideoTrack extends Track {
         public int videoCodec = VIDEO_CODEC_H264;
@@ -638,9 +640,12 @@ public class RtspClient {
     throws IOException {
         byte[] data = EMPTY_ARRAY; // Usually not bigger than MTU = 15KB
 
-        final RtpParser videoParser = (sdpInfo.videoTrack != null && sdpInfo.videoTrack.videoCodec == VIDEO_CODEC_H265 ?
-                new RtpH265Parser() :
-                new RtpH264Parser());
+        final RtpParser videoParser = (sdpInfo.videoTrack == null ? new RtpH264Parser() :
+                switch (sdpInfo.videoTrack.videoCodec) {
+                    case VIDEO_CODEC_H265 -> new RtpH265Parser();
+                    case VIDEO_CODEC_AV1 -> new RtpAv1Parser();
+                    default -> new RtpH264Parser();
+                });
         final AudioParser audioParser = sdpInfo.audioTrack != null
                 ? switch (sdpInfo.audioTrack.audioCodec) {
                     case AUDIO_CODEC_AAC -> new AacParser(sdpInfo.audioTrack.mode);
@@ -693,7 +698,12 @@ public class RtspClient {
                     nalUnit = videoParser.processRtpPacketAndGetNalUnit(data, header.payloadSize, header.marker == 1);
                 }
 
-                if (nalUnit != null) {
+                if (nalUnit != null && sdpInfo.videoTrack.videoCodec == VIDEO_CODEC_AV1) {
+                    // AV1 has no NAL units / SPS-PPS-IDR concept. RtpAv1Parser already
+                    // hands back one fully reassembled temporal unit (concatenated OBUs,
+                    // including the sequence header OBU on keyframes), so just forward it.
+                    listener.onRtspVideoNalUnitReceived(nalUnit, 0, nalUnit.length, header.getTimestampMsec());
+                } else if (nalUnit != null) {
                     boolean isH265 = sdpInfo.videoTrack.videoCodec == VIDEO_CODEC_H265;
                     byte type = VideoCodecUtils.INSTANCE.getNalUnitType(nalUnit, 0, nalUnit.length, isH265);
 //                  Log.i(TAG, "NAL u: " + VideoCodecUtils.INSTANCE.getH265NalUnitTypeString(type));
@@ -1069,6 +1079,7 @@ public class RtspClient {
                                         switch (values[0].toLowerCase()) {
                                             case "h264" -> ((VideoTrack) tracks[0]).videoCodec = VIDEO_CODEC_H264;
                                             case "h265" -> ((VideoTrack) tracks[0]).videoCodec = VIDEO_CODEC_H265;
+                                            case "av1" -> ((VideoTrack) tracks[0]).videoCodec = VIDEO_CODEC_AV1;
                                             default -> Log.w(TAG, "Unknown video codec \"" + values[0] + "\"");
                                         }
                                         Log.i(TAG, "Video: " + values[0]);
