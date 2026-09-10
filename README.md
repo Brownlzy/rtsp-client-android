@@ -13,6 +13,7 @@ Unlike [AndroidX Media ExoPlayer](https://github.com/androidx/media) which also 
 - Video H.264/H.265/AV1.
 - Audio AAC LC, G.711 uLaw, G.711 aLaw, Opus.
 - Support for application specific data sent via RTP, e.g. GPS data (`m=application`, see [RFC 4566 sec.5.14](https://datatracker.ietf.org/doc/html/rfc4566#section-5.14))
+- SRTP decryption for encrypted streams negotiated via SDES (`a=crypto:` in the SDP, see [RFC 4568](https://datatracker.ietf.org/doc/html/rfc4568)), suites `AES_CM_128_HMAC_SHA1_80`/`AES_CM_128_HMAC_SHA1_32`.
 - Basic/Digest authentication.
 - Uses Android's [Low-Latency MediaCodec](https://source.android.com/docs/core/media/low-latency-media) by default if available.
 - Ability to select hardware or software video decoder.

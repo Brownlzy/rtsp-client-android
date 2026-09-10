@@ -17,6 +17,7 @@ import com.alexvas.rtsp.parser.RtpH264Parser;
 import com.alexvas.rtsp.parser.RtpH265Parser;
 import com.alexvas.rtsp.parser.RtpHeaderParser;
 import com.alexvas.rtsp.parser.RtpParser;
+import com.alexvas.rtsp.srtp.SrtpCryptoContext;
 import com.alexvas.utils.NetUtils;
 import com.alexvas.utils.VideoCodecUtils;
 
@@ -28,6 +29,7 @@ import java.io.Serial;
 import java.math.BigInteger;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -187,6 +189,16 @@ public class RtspClient {
     public abstract static class Track {
         public String request;
         public int payloadType;
+
+        /**
+         * SRTP crypto suite from "a=crypto:" SDP line (RFC 4568), e.g. "AES_CM_128_HMAC_SHA1_80".
+         * Null if the track is not SRTP-encrypted, or uses an unsupported crypto suite.
+         */
+        public @Nullable String cryptoSuite;
+        /** SRTP master key decoded from the "a=crypto:" SDP line, 16 bytes. */
+        public @Nullable byte[] cryptoMasterKey;
+        /** SRTP master salt decoded from the "a=crypto:" SDP line, 14 bytes. */
+        public @Nullable byte[] cryptoMasterSalt;
 
         @NonNull
         @Override
@@ -663,6 +675,10 @@ public class RtspClient {
         byte[] nalUnitAud = EMPTY_ARRAY;
         int videoSeqNum = 0;
 
+        final SrtpCryptoContext videoSrtpContext = createSrtpContext(sdpInfo.videoTrack);
+        final SrtpCryptoContext audioSrtpContext = createSrtpContext(sdpInfo.audioTrack);
+        final SrtpCryptoContext applicationSrtpContext = createSrtpContext(sdpInfo.applicationTrack);
+
         long keepAliveSent = System.currentTimeMillis();
 
         while (!exitFlag.get()) {
@@ -682,6 +698,27 @@ public class RtspClient {
             if (keepAliveTimeout > 0 && l - keepAliveSent > keepAliveTimeout) {
                 keepAliveSent = l;
                 keepAliveListener.onRtspKeepAliveRequested();
+            }
+
+            // Decrypt SRTP payload in place, if this track is encrypted.
+            // Per RFC 3711 sec.3.1, an RTP header extension (X bit set) is authenticated but
+            // NOT encrypted, so it must be skipped when decrypting even though it is covered
+            // by the auth tag. The extension header itself is never encrypted either, so it's
+            // safe to read its length from `data` before any decryption happens.
+            SrtpCryptoContext srtpContext = null;
+            if (sdpInfo.videoTrack != null && header.payloadType == sdpInfo.videoTrack.payloadType)
+                srtpContext = videoSrtpContext;
+            else if (sdpInfo.audioTrack != null && header.payloadType == sdpInfo.audioTrack.payloadType)
+                srtpContext = audioSrtpContext;
+            else if (sdpInfo.applicationTrack != null && header.payloadType == sdpInfo.applicationTrack.payloadType)
+                srtpContext = applicationSrtpContext;
+            if (srtpContext != null) {
+                int headerExtensionLength = 0;
+                if (header.extension == 1 && header.payloadSize >= 4)
+                    headerExtensionLength = ((data[2] & 0xFF) << 8 | (data[3] & 0xFF)) * 4 + 4;
+                header.payloadSize = srtpContext.decryptAndVerify(header.rawHeader, data, header.payloadSize, header.ssrc, header.sequenceNumber, headerExtensionLength);
+                if (header.payloadSize < 0)
+                    continue; // Dropped: failed SRTP authentication.
             }
 
             // Video
@@ -799,6 +836,18 @@ public class RtspClient {
                 if (DEBUG && header.payloadType >= 96 && header.payloadType <= 127)
                     Log.w(TAG, "Invalid RTP payload type " + header.payloadType);
             }
+        }
+    }
+
+    @Nullable
+    private static SrtpCryptoContext createSrtpContext(@Nullable Track track) {
+        if (track == null || track.cryptoSuite == null || track.cryptoMasterKey == null || track.cryptoMasterSalt == null)
+            return null;
+        try {
+            return new SrtpCryptoContext(track.cryptoSuite, track.cryptoMasterKey, track.cryptoMasterSalt);
+        } catch (GeneralSecurityException e) {
+            Log.e(TAG, "Failed to initialize SRTP decryption for track " + track, e);
+            return null;
         }
     }
 
@@ -1051,6 +1100,10 @@ public class RtspClient {
                         if (param.second.startsWith("control:")) {
                             currentTrack.request = param.second.substring(8);
 
+                        // a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:ov0eMuXIdmbT0h1Q4eUoUiHKUUWlxNdIZOHIP44b
+                        } else if (param.second.startsWith("crypto:")) {
+                            updateTrackCryptoFromDescribeParam(currentTrack, param);
+
                         // a=fmtp:96 packetization-mode=1; profile-level-id=4D4029; sprop-parameter-sets=Z01AKZpmBkCb8uAtQEBAQXpw,aO48gA==
                         // a=fmtp:97 streamtype=5; profile-level-id=15; mode=AAC-hbr; config=1408; sizeLength=13; indexLength=3; indexDeltaLength=3; profile=1; bitrate=32000;
                         // a=fmtp:97 streamtype=5;profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3;config=1408
@@ -1291,6 +1344,50 @@ public class RtspClient {
                 }
             }
         }
+    }
+
+    // a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:ov0eMuXIdmbT0h1Q4eUoUiHKUUWlxNdIZOHIP44b
+    // a=crypto:1 AES_CM_128_HMAC_SHA1_32 inline:PS1uQCVeeCFCanVmcjkpPlwsdTlv|2^20|1:32
+    private static void updateTrackCryptoFromDescribeParam(@NonNull Track track, @NonNull Pair<String, String> param) {
+        // Keep the first (preferred) crypto line if a track offers several.
+        if (track.cryptoMasterKey != null)
+            return;
+        String value = param.second.substring(7).trim(); // strip "crypto:"
+        String[] tokens = TextUtils.split(value, " ");
+        if (tokens.length < 3) {
+            Log.w(TAG, "Invalid a=crypto line \"" + param.second + "\"");
+            return;
+        }
+        String cryptoSuite = tokens[1];
+        if (!SrtpCryptoContext.isSuiteSupported(cryptoSuite)) {
+            Log.w(TAG, "Unsupported SRTP crypto suite \"" + cryptoSuite + "\"");
+            return;
+        }
+        String keyParams = tokens[2];
+        if (!keyParams.startsWith("inline:")) {
+            Log.w(TAG, "Unsupported SRTP key method in \"" + param.second + "\"");
+            return;
+        }
+        // inline:<base64 key||salt>[|<lifetime>][|<MKI>:<MKI length>]
+        String[] keyParts = keyParams.substring(7).split("\\|");
+        if (keyParts.length > 1) {
+            Log.w(TAG, "SRTP MKI/key lifetime params are not supported, ignoring: \"" + param.second + "\"");
+        }
+        byte[] keyAndSalt;
+        try {
+            keyAndSalt = Base64.decode(keyParts[0], Base64.NO_WRAP);
+        } catch (IllegalArgumentException e) {
+            Log.w(TAG, "Failed to decode SRTP inline key from \"" + param.second + "\"");
+            return;
+        }
+        int expectedLength = SrtpCryptoContext.MASTER_KEY_LEN + SrtpCryptoContext.MASTER_SALT_LEN;
+        if (keyAndSalt.length != expectedLength) {
+            Log.w(TAG, "Unexpected SRTP inline key length " + keyAndSalt.length + " (expected " + expectedLength + ")");
+            return;
+        }
+        track.cryptoSuite = cryptoSuite;
+        track.cryptoMasterKey = Arrays.copyOfRange(keyAndSalt, 0, SrtpCryptoContext.MASTER_KEY_LEN);
+        track.cryptoMasterSalt = Arrays.copyOfRange(keyAndSalt, SrtpCryptoContext.MASTER_KEY_LEN, expectedLength);
     }
 
     @NonNull

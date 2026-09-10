@@ -28,6 +28,8 @@ public class RtpHeaderParser {
         public long timeStamp;
         public long ssrc;
         public int payloadSize;
+        /** The 12-byte fixed RTP header exactly as received, needed for SRTP authentication. */
+        public byte[] rawHeader;
 
         public long getTimestampMsec() {
             return (long)(timeStamp * 11.111111);
@@ -85,8 +87,10 @@ public class RtpHeaderParser {
             rtpHeader.payloadType = header[1] & 0x7F;
             rtpHeader.sequenceNumber = (header[3] & 0xFF) + ((header[2] & 0xFF) << 8);
             rtpHeader.timeStamp = (header[7] & 0xFF) + ((header[6] & 0xFF) << 8) + ((header[5] & 0xFF) << 16) + ((header[4] & 0xFF) << 24) & 0xffffffffL;
-            rtpHeader.ssrc = (header[7] & 0xFF) + ((header[6] & 0xFF) << 8) + ((header[5] & 0xFF) << 16) + ((header[4] & 0xFF) << 24) & 0xffffffffL;
+            rtpHeader.ssrc = (header[11] & 0xFFL) | ((header[10] & 0xFFL) << 8)
+                    | ((header[9] & 0xFFL) << 16) | ((header[8] & 0xFFL) << 24);
             rtpHeader.payloadSize = packetSize - RTP_HEADER_SIZE;
+            rtpHeader.rawHeader = header.clone();
             return rtpHeader;
         }
 
