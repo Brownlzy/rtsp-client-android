@@ -4,6 +4,7 @@ import android.media.*
 import android.os.Process
 import android.util.Log
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 
 class AudioDecodeThread (
@@ -50,60 +51,27 @@ class AudioDecodeThread (
             format.setByteBuffer("csd-0", ByteBuffer.wrap(csd0))
             format.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
         } else if (mimeType == MediaFormat.MIMETYPE_AUDIO_OPUS) {
-            // TODO: Add Opus support
-
-//            val OPUS_IDENTIFICATION_HEADER = "OpusHead".toByteArray()
-//            val OPUS_PRE_SKIP_NSEC = ByteBuffer.allocate(8).putLong(11971).array()
-//            val OPUS_SEEK_PRE_ROLL_NSEC = ByteBuffer.allocate(8).putLong(80000000).array()
-
-//            val csd0 = ByteBuffer.allocate(8+1+1+2+4+2+1)
-//            csd0.put("OpusHead".toByteArray())
-//            // Version
-//            csd0.put(1)
-//            // Number of channels
-//            csd0.put(2)
-//            // Pre-skip
-//            csd0.putShort(0)
-//            csd0.putInt(sampleRate)
-//            // Output Gain
-//            csd0.putShort(0)
-//            // Channel Mapping Family
-//            csd0.put(0)
-            // Buffer buf = new Buffer();
-//                // Magic Signature：固定头，占8个字节，为字符串OpusHead
-//                buf.write("OpusHead".getBytes(StandardCharsets.UTF_8));
-//                // Version：版本号，占1字节，固定为0x01
-//                buf.writeByte(1);
-//                // Channel Count：通道数，占1字节，根据音频流通道自行设置，如0x02
-//                buf.writeByte(1);
-//                // Pre-skip：回放的时候从解码器中丢弃的samples数量，占2字节，为小端模式，默认设置0x00,
-//                buf.writeShortLe(0);
-//                // Input Sample Rate (Hz)：音频流的Sample Rate，占4字节，为小端模式，根据实际情况自行设置
-//                buf.writeIntLe(currentFormat.HZ);
-//                //Output Gain：输出增益，占2字节，为小端模式，没有用到默认设置0x00, 0x00就好
-//                buf.writeShortLe(0);
-//                // Channel Mapping Family：通道映射系列，占1字节，默认设置0x00就好
-//                buf.writeByte(0);
-//                //Channel Mapping Table：可选参数，上面的Family默认设置0x00的时候可忽略
-//            format.setByteBuffer("csd-0", ByteBuffer.wrap(OPUS_IDENTIFICATION_HEADER).order(ByteOrder.BIG_ENDIAN))
-//            format.setByteBuffer("csd-1", ByteBuffer.wrap(OPUS_PRE_SKIP_NSEC).order(ByteOrder.BIG_ENDIAN))
-//            format.setByteBuffer("csd-2", ByteBuffer.wrap(OPUS_SEEK_PRE_ROLL_NSEC).order(ByteOrder.LITTLE_ENDIAN))
-
-            val csd0 = byteArrayOf(
-                0x4f, 0x70, 0x75, 0x73, // "Opus"
-                0x48, 0x65, 0x61, 0x64, // "Head"
-                0x01,  // Version
-                0x02,  // Channel Count
-                0x00, 0x00,  // Pre skip
-                0x80.toByte(), 0xbb.toByte(), 0x00, 0x00, // Sample rate 48000
-                0x00, 0x00,  // Output Gain (Q7.8 in dB)
-                0x00,  // Mapping Family
-            )
-            val csd1 = byteArrayOf(0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
-            val csd2 = byteArrayOf(0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
-            format.setByteBuffer("csd-0", ByteBuffer.wrap(csd0))
-            format.setByteBuffer("csd-1", ByteBuffer.wrap(csd1))
-            format.setByteBuffer("csd-2", ByteBuffer.wrap(csd2))
+            // Android's Opus decoder expects three codec-specific-data buffers
+            // mirroring the Ogg Opus header layout (see RFC 7845 §5.1 and
+            // ExoPlayer's OpusUtil, which this follows):
+            //  csd-0: Opus identification header ("OpusHead" + stream params)
+            //  csd-1: pre-skip / codec delay in nanoseconds (8 bytes, little-endian)
+            //  csd-2: seek pre-roll in nanoseconds (8 bytes, little-endian)
+            // RTSP/SDP for Opus carries no equivalent of these values, so
+            // pre-skip and seek pre-roll are sent as zero (no adjustment).
+            val csd0 = ByteBuffer.allocate(19).order(ByteOrder.LITTLE_ENDIAN)
+            csd0.put("OpusHead".toByteArray(Charsets.US_ASCII)) // Magic signature
+            csd0.put(1)                           // Version
+            csd0.put(channelCount.toByte())       // Channel count
+            csd0.putShort(0)                      // Pre-skip
+            csd0.putInt(sampleRate)               // Input sample rate (Hz)
+            csd0.putShort(0)                      // Output gain (Q7.8 in dB)
+            csd0.put(0)                           // Channel mapping family
+            val csd1 = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putLong(0L)
+            val csd2 = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putLong(0L)
+            format.setByteBuffer("csd-0", ByteBuffer.wrap(csd0.array()))
+            format.setByteBuffer("csd-1", ByteBuffer.wrap(csd1.array()))
+            format.setByteBuffer("csd-2", ByteBuffer.wrap(csd2.array()))
         }
 
         decoder.configure(format, null, null, 0)

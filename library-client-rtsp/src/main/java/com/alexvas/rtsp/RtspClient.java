@@ -10,6 +10,7 @@ import androidx.annotation.Nullable;
 
 import com.alexvas.rtsp.parser.AacParser;
 import com.alexvas.rtsp.parser.G711Parser;
+import com.alexvas.rtsp.parser.OpusParser;
 import com.alexvas.rtsp.parser.AudioParser;
 import com.alexvas.rtsp.parser.RtpAv1Parser;
 import com.alexvas.rtsp.parser.RtpH264Parser;
@@ -649,6 +650,7 @@ public class RtspClient {
         final AudioParser audioParser = sdpInfo.audioTrack != null
                 ? switch (sdpInfo.audioTrack.audioCodec) {
                     case AUDIO_CODEC_AAC -> new AacParser(sdpInfo.audioTrack.mode);
+                    case AUDIO_CODEC_OPUS -> new OpusParser();
                     case AUDIO_CODEC_G711_ULAW,
                          AUDIO_CODEC_G711_ALAW -> new G711Parser();
                     default -> null;
