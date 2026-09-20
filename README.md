@@ -8,7 +8,7 @@ Unlike [AndroidX Media ExoPlayer](https://github.com/androidx/media) which also 
 ![Screenshot](docs/images/rtsp-demo-app.webp?raw=true "Screenshot")
 
 ## Features:
-- RTSP/RTSPS over TCP.
+- RTSP/RTSPS over TCP/UDP.
 - Supports majority of RTSP IP cameras.
 - Video H.264/H.265/AV1.
 - Audio AAC LC, G.711 uLaw, G.711 aLaw, Opus.

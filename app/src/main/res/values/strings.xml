@@ -3,4 +3,5 @@
     <string name="title_live">Live</string>
     <string name="title_raw">Raw</string>
     <string name="title_logs">Logs</string>
+    <string name="local_network_permission_denied">Allow Nearby devices access in app settings to connect to local cameras.</string>
 </resources>

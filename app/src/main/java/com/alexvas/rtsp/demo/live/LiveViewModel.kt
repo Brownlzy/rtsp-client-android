@@ -51,12 +51,12 @@ class LiveViewModel : ViewModel() {
             e.printStackTrace()
         }
         try {
-            rtspUsername.setValue(pref.getString(RTSP_USERNAME_KEY, DEFAULT_RTSP_USERNAME))
+            rtspUsername.value = pref.getString(RTSP_USERNAME_KEY, DEFAULT_RTSP_USERNAME)
         } catch (e: ClassCastException) {
             e.printStackTrace()
         }
         try {
-            rtspPassword.setValue(pref.getString(RTSP_PASSWORD_KEY, DEFAULT_RTSP_PASSWORD))
+            rtspPassword.value = pref.getString(RTSP_PASSWORD_KEY, DEFAULT_RTSP_PASSWORD)
         } catch (e: ClassCastException) {
             e.printStackTrace()
         }
@@ -72,45 +72,44 @@ class LiveViewModel : ViewModel() {
         }
     }
 
-    fun initEditTexts(etRtspRequest: EditText, etRtspUsername: EditText, etRtspPassword: EditText) {
-        if (DEBUG) Log.v(TAG, "initEditTexts()")
-        etRtspRequest.addTextChangedListener(object : TextWatcher {
-            override fun afterTextChanged(s: Editable?) {
-            }
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
-            }
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                val text = s.toString()
-                if (text != rtspRequest.value) {
-                    rtspRequest.value = text
-                }
-            }
-        })
-        etRtspUsername.addTextChangedListener(object : TextWatcher {
-            override fun afterTextChanged(s: Editable?) {
-            }
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
-            }
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                val text = s.toString()
-                if (text != rtspUsername.value) {
-                    rtspUsername.value = text
-                }
-            }
-        })
-        etRtspPassword.addTextChangedListener(object : TextWatcher {
-            override fun afterTextChanged(s: Editable?) {
-            }
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
-            }
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                val text = s.toString()
-                if (text != rtspPassword.value) {
-                    rtspPassword.value = text
-                }
-            }
-        })
-    }
+//    fun initEditTexts(etRtspRequest: EditText, etRtspUsername: EditText, etRtspPassword: EditText) {
+//        if (DEBUG) Log.v(TAG, "initEditTexts()")
+//        etRtspRequest.addTextChangedListener(object : TextWatcher {
+//            override fun afterTextChanged(s: Editable?) {
+//            }
+//            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
+//            }
+//            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+//                val text = s.toString()
+//                if (text != rtspRequest.value) {
+//                    rtspRequest.value = text
+//                }
+//            }
+//        })
+//        etRtspUsername.addTextChangedListener(object : TextWatcher {
+//            override fun afterTextChanged(s: Editable?) {
+//            }
+//            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
+//            }
+//            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+//                val text = s.toString()
+//                if (text != rtspUsername.value) {
+//                    rtspUsername.value = text
+//                }
+//            }
+//        })
+//        etRtspPassword.addTextChangedListener(object : TextWatcher {
+//            override fun afterTextChanged(s: Editable?) {
+//            }
+//            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
+//            }
+//            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+//                val text = s.toString()
+//                if (text != rtspPassword.value) {
+//                    rtspPassword.value = text
+//                }
+//            }
+//        })
 
     companion object {
         private val TAG: String = LiveViewModel::class.java.simpleName
