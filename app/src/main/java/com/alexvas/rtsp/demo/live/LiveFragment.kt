@@ -431,10 +431,19 @@ class LiveFragment : Fragment() {
             val task: TimerTask = object : TimerTask() {
                 override fun run() {
                     val statistics = binding.svVideoSurface.statistics
+                    val audioParams = if (statistics.audioCodec != null) {
+                        " (${if (statistics.audioSampleRate > 0) "${statistics.audioSampleRate} Hz" else "-"}, " +
+                        "${if (statistics.audioChannels > 0) statistics.audioChannels.toString() else "-"} channels)"
+                    } else {
+                        ""
+                    }
                     val text =
-                        "Video decoder: ${statistics.videoDecoderType.toString().lowercase()} ${if (statistics.videoDecoderName.isNullOrEmpty()) "" else "(${statistics.videoDecoderName})"}" +
+                        "Video codec: ${statistics.videoCodec ?: "-"}" +
+                        "\nVideo decoder: ${statistics.videoDecoderType.toString().lowercase()} ${if (statistics.videoDecoderName.isNullOrEmpty()) "" else "(${statistics.videoDecoderName})"}" +
                         "\nVideo decoder latency: ${statistics.videoDecoderLatencyMsec} ms" +
-                        "\nResolution: ${svVideoSurfaceResolution.first}x${svVideoSurfaceResolution.second}"
+                        "\nVideo resolution: ${svVideoSurfaceResolution.first}x${svVideoSurfaceResolution.second}" +
+                        "\n\nAudio codec: ${statistics.audioCodec ?: "-"}" + audioParams +
+                        "\nAudio decoder: ${statistics.audioDecoderName ?: "-"}"
 //                        "\nNetwork latency: "
 
 //                    // Assume that difference between current Android time and camera time cannot be more than 5 sec.

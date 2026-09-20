@@ -39,6 +39,13 @@ class RtspProcessor(
 ) {
 
     class Statistics {
+        /** Codec names from SDP; null when the corresponding track is absent. */
+        var videoCodec: String? = null
+        var audioCodec: String? = null
+        /** Audio sample rate in Hz; 0 when no audio track is available. */
+        var audioSampleRate: Int = 0
+        var audioChannels: Int = 0
+        var audioDecoderName: String? = null
         var videoDecoderType = DecoderType.HARDWARE
         var videoDecoderName: String? = null
         var videoDecoderLatencyMsec = -1
@@ -75,6 +82,7 @@ class RtspProcessor(
                     videoDecoderName = decoder.getCurrentVideoDecoderName()
                 }
             }
+            field.audioDecoderName = audioDecodeThread?.audioDecoderName
             return field
         }
         private set
@@ -150,18 +158,34 @@ class RtspProcessor(
 
         override fun onRtspConnected(sdpInfo: SdpInfo) {
             if (DEBUG) Log.v(TAG, "onRtspConnected()")
+            videoMimeType = ""
+            audioMimeType = ""
+            audioSampleRate = 0
+            audioChannelCount = 0
+            audioCodecConfig = null
+            statistics.apply {
+                videoCodec = when (sdpInfo.videoTrack?.videoCodec) {
+                    RtspClient.VIDEO_CODEC_H264 -> "H264"
+                    RtspClient.VIDEO_CODEC_H265 -> "H265"
+                    RtspClient.VIDEO_CODEC_AV1 -> "AV1"
+                    else -> null
+                }
+                audioCodec = when (sdpInfo.audioTrack?.audioCodec) {
+                    RtspClient.AUDIO_CODEC_AAC -> "AAC"
+                    RtspClient.AUDIO_CODEC_OPUS -> "OPUS"
+                    RtspClient.AUDIO_CODEC_G711_ULAW -> "G711_ULAW"
+                    RtspClient.AUDIO_CODEC_G711_ALAW -> "G711_ALAW"
+                    else -> null
+                }
+                audioSampleRate = sdpInfo.audioTrack?.sampleRateHz ?: 0
+                audioChannels = sdpInfo.audioTrack?.channels ?: 0
+            }
             if (sdpInfo.videoTrack != null) {
                 videoFrameQueue.clear()
                 when (sdpInfo.videoTrack?.videoCodec) {
                     RtspClient.VIDEO_CODEC_H264 -> videoMimeType = MediaFormat.MIMETYPE_VIDEO_AVC
                     RtspClient.VIDEO_CODEC_H265 -> videoMimeType = MediaFormat.MIMETYPE_VIDEO_HEVC
                     RtspClient.VIDEO_CODEC_AV1 -> videoMimeType = MediaFormat.MIMETYPE_VIDEO_AV1
-                }
-                when (sdpInfo.audioTrack?.audioCodec) {
-                    RtspClient.AUDIO_CODEC_AAC -> audioMimeType = MediaFormat.MIMETYPE_AUDIO_AAC
-                    RtspClient.AUDIO_CODEC_OPUS -> audioMimeType = MediaFormat.MIMETYPE_AUDIO_OPUS
-                    RtspClient.AUDIO_CODEC_G711_ULAW -> audioMimeType = MediaFormat.MIMETYPE_AUDIO_G711_MLAW
-                    RtspClient.AUDIO_CODEC_G711_ALAW -> audioMimeType = MediaFormat.MIMETYPE_AUDIO_G711_ALAW
                 }
                 val sps: ByteArray? = sdpInfo.videoTrack?.sps
                 val pps: ByteArray? = sdpInfo.videoTrack?.pps
@@ -216,6 +240,8 @@ class RtspProcessor(
                 when (sdpInfo.audioTrack?.audioCodec) {
                     RtspClient.AUDIO_CODEC_AAC -> audioMimeType = MediaFormat.MIMETYPE_AUDIO_AAC
                     RtspClient.AUDIO_CODEC_OPUS -> audioMimeType = MediaFormat.MIMETYPE_AUDIO_OPUS
+                    RtspClient.AUDIO_CODEC_G711_ULAW -> audioMimeType = MediaFormat.MIMETYPE_AUDIO_G711_MLAW
+                    RtspClient.AUDIO_CODEC_G711_ALAW -> audioMimeType = MediaFormat.MIMETYPE_AUDIO_G711_ALAW
                 }
                 audioSampleRate = sdpInfo.audioTrack?.sampleRateHz!!
                 audioChannelCount = sdpInfo.audioTrack?.channels!!
@@ -493,6 +519,7 @@ class RtspProcessor(
         this.requestVideo = requestVideo
         this.requestAudio = requestAudio
         this.requestApplication = requestApplication
+        statistics = Statistics()
         rtspThread = RtspThread().apply {
             name = "RTSP IO thread [${getUriName()}]"
             start()

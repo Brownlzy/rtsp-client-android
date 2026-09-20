@@ -17,6 +17,10 @@ class AudioDecodeThread (
     private var isRunning = true
 
     @Volatile
+    var audioDecoderName: String? = null
+        private set
+
+    @Volatile
     private var audioTrack: AudioTrack? = null
 
     /**
@@ -76,6 +80,7 @@ class AudioDecodeThread (
 
         decoder.configure(format, null, null, 0)
         decoder.start()
+        audioDecoderName = decoder.name
 
         // Creating audio playback device
         val outChannel = if (channelCount > 1) AudioFormat.CHANNEL_OUT_STEREO else AudioFormat.CHANNEL_OUT_MONO
@@ -169,6 +174,7 @@ class AudioDecodeThread (
         audioTrack.release()
         this.audioTrack = null
 
+        audioDecoderName = null
         try {
             decoder.stop()
             decoder.release()
