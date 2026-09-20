@@ -56,6 +56,8 @@ class RawFragment : Fragment() {
                     llRtspParams.cbAudio.isEnabled = false
                     llRtspParams.cbApplication.isEnabled = false
                     llRtspParams.cbDebug.isEnabled = false
+                    llRtspParams.rbTransportTcp.isEnabled = false
+                    llRtspParams.rbTransportUdp.isEnabled = false
                     tvStatusSurface.text = "RTSP connecting"
                     bnStartStop.text = "Stop RTSP"
                 }
@@ -113,6 +115,8 @@ class RawFragment : Fragment() {
                     llRtspParams.cbAudio.isEnabled = true
                     llRtspParams.cbApplication.isEnabled = true
                     llRtspParams.cbDebug.isEnabled = true
+                    llRtspParams.rbTransportTcp.isEnabled = true
+                    llRtspParams.rbTransportUdp.isEnabled = true
                     llRtspParams.etRtspRequest.isEnabled = true
                     llRtspParams.etRtspUsername.isEnabled = true
                     llRtspParams.etRtspPassword.isEnabled = true
@@ -168,6 +172,8 @@ class RawFragment : Fragment() {
                     .withCredentials(
                         binding.llRtspParams.etRtspUsername.text.toString(),
                         binding.llRtspParams.etRtspPassword.text.toString())
+                    .withTransport(
+                        if (binding.llRtspParams.rbTransportUdp.isChecked) RtspClient.Transport.UDP else RtspClient.Transport.TCP)
                     .build()
 
             rtspClient.execute()

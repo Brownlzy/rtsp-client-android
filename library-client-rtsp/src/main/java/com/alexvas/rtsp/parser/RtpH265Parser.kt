@@ -10,8 +10,17 @@ class RtpH265Parser: RtpParser() {
     override fun processRtpPacketAndGetNalUnit(data: ByteArray, length: Int, marker: Boolean): ByteArray? {
         if (DEBUG) Log.v(TAG, "processRtpPacketAndGetNalUnit(length=$length, marker=$marker)")
 
+        if (length < 2 || length > data.size) {
+            reset()
+            return null
+        }
+
         // NAL Unit Header.type (RFC7798 Section 1.1.4).
         val nalType = ((data[0].toInt() shr 1) and 0x3F).toByte()
+        if (nalType == RTP_PACKET_TYPE_FU && length < 3) {
+            reset()
+            return null
+        }
         var nalUnit: ByteArray? = null
 
 //        Log.d(TAG, "\t\tNAL type: ${VideoCodecUtils.getH265NalUnitTypeString(nalType)}")
@@ -32,7 +41,7 @@ class RtpH265Parser: RtpParser() {
         if (marker) {
             val result = stream.toByteArray()
             stream = ByteArrayOutputStream()
-            return result
+            return result.takeIf { it.isNotEmpty() }
         }
         return null
     }
@@ -77,6 +86,7 @@ class RtpH265Parser: RtpParser() {
 
     private fun addMiddleFragmentedPacket(data: ByteArray, length: Int) {
         if (DEBUG) Log.v(TAG, "addMiddleFragmentedPacket(data.size=${data.size}, length=$length)")
+        if (fragmentedBuffer[0] == null) return
         fragmentedPackets++
         if (fragmentedPackets >= fragmentedBuffer.size) {
             Log.e(TAG, "Too many middle packets. No RTP_PACKET_TYPE_FU end packet received. Skipped RTP packet.")
@@ -95,7 +105,7 @@ class RtpH265Parser: RtpParser() {
         if (fragmentedBuffer[0] == null) {
             Log.e(TAG, "No NAL FU_A start packet received. Skipped RTP packet.")
         } else {
-            nalUnit = ByteArray(fragmentedBufferLength + length + 3)
+            nalUnit = ByteArray(fragmentedBufferLength + length + 1)
             writeNalPrefix0001(nalUnit)
             var tmpLen = 4
             // Write start and middle packets
@@ -119,11 +129,10 @@ class RtpH265Parser: RtpParser() {
         return nalUnit
     }
 
-    private fun clearFragmentedBuffer() {
-        if (DEBUG) Log.v(TAG, "clearFragmentedBuffer()")
-        for (i in 0 until fragmentedPackets + 1) {
-            fragmentedBuffer[i] = null
-        }
+    override fun reset() {
+        if (DEBUG) Log.v(TAG, "reset()")
+        super.reset()
+        stream = ByteArrayOutputStream()
     }
 
     companion object {

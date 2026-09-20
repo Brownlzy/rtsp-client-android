@@ -12,8 +12,17 @@ class RtpH264Parser: RtpParser() {
     override fun processRtpPacketAndGetNalUnit(data: ByteArray, length: Int, marker: Boolean): ByteArray? {
         if (DEBUG) Log.v(TAG, "processRtpPacketAndGetNalUnit(data.size=${data.size}, length=$length, marker=$marker)")
 
+        if (length < 1 || length > data.size) {
+            reset()
+            return null
+        }
+
         val nalType = (data[0].toInt() and 0x1F).toByte()
-        val packFlag = data[1].toInt() and 0xC0
+        if (nalType == VideoCodecUtils.NAL_FU_A && length < 2) {
+            reset()
+            return null
+        }
+        val packFlag = if (length >= 2) data[1].toInt() and 0xC0 else 0
         var nalUnit: ByteArray? = null
 
         if (DEBUG)
@@ -64,7 +73,7 @@ class RtpH264Parser: RtpParser() {
         if (marker) {
             val result = stream.toByteArray()
             stream = ByteArrayOutputStream()
-            return result
+            return result.takeIf { it.isNotEmpty() }
         }
         return null
     }
@@ -81,6 +90,7 @@ class RtpH264Parser: RtpParser() {
 
     private fun addMiddleFragmentedPacket(data: ByteArray, length: Int) {
         if (DEBUG) Log.v(TAG, "addMiddleFragmentedPacket(data.size=${data.size}, length=$length)")
+        if (fragmentedBuffer[0] == null) return
         fragmentedPackets++
         if (fragmentedPackets >= fragmentedBuffer.size) {
             Log.e(TAG, "Too many middle packets. No NAL FU_A end packet received. Skipped RTP packet.")
@@ -123,11 +133,10 @@ class RtpH264Parser: RtpParser() {
         return nalUnit
     }
 
-    private fun clearFragmentedBuffer() {
-        if (DEBUG) Log.v(TAG, "clearFragmentedBuffer()")
-        for (i in 0 until fragmentedPackets + 1) {
-            fragmentedBuffer[i] = null
-        }
+    override fun reset() {
+        if (DEBUG) Log.v(TAG, "reset()")
+        super.reset()
+        stream = ByteArrayOutputStream()
     }
 
     companion object {

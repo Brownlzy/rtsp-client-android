@@ -6,6 +6,7 @@ import android.net.Uri
 import android.util.AttributeSet
 import android.util.Log
 import android.widget.ImageView
+import com.alexvas.rtsp.RtspClient
 import com.alexvas.rtsp.codec.VideoDecodeThread
 import com.alexvas.rtsp.codec.VideoDecoderBitmapThread
 import com.alexvas.rtsp.widget.RtspProcessor.Statistics
@@ -86,15 +87,17 @@ class RtspImageView : ImageView {
         username: String? = null,
         password: String? = null,
         userAgent: String? = null,
-        socketTimeout: Int? = null
+        socketTimeout: Int? = null,
+        transport: RtspClient.Transport = RtspClient.Transport.TCP,
     ) {
-        if (DEBUG) Log.v(TAG, "init(uri='$uri', username='$username', password='$password', userAgent='$userAgent')")
+        if (DEBUG) Log.v(TAG, "init(uri='$uri', username='$username', password='$password', userAgent='$userAgent', transport=$transport)")
         rtspProcessor.init(
             uri,
             username,
             password,
             userAgent,
-            socketTimeout ?: RtspProcessor.DEFAULT_SOCKET_TIMEOUT
+            socketTimeout ?: RtspProcessor.DEFAULT_SOCKET_TIMEOUT,
+            transport
         )
     }
 

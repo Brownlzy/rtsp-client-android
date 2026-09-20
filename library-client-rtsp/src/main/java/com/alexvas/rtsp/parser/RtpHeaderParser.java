@@ -9,13 +9,15 @@ import com.alexvas.utils.NetUtils;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Arrays;
 
 public class RtpHeaderParser {
 
     private static final String TAG = RtpHeaderParser.class.getSimpleName();
     private static final boolean DEBUG = false;
 
-    private final static int RTP_HEADER_SIZE = 12;
+    /** Size of the fixed RTP header (RFC 3550), not counting any CSRC list. */
+    public final static int RTP_HEADER_SIZE = 12;
 
     public static class RtpHeader {
         public int version;
@@ -113,6 +115,19 @@ public class RtpHeaderParser {
                     + ", ssrc: " + ssrc
                     + ", payload size: " + payloadSize);
         }
+    }
+
+    /**
+     * Parses one complete RTP packet (header + payload) as received in a single UDP datagram.
+     * Unlike {@link #readHeader}, there is no "$"-prefixed interleaved framing to strip, and the
+     * whole packet is already available in {@code packet}.
+     */
+    @Nullable
+    public static RtpHeader parsePacket(@NonNull byte[] packet, int length) {
+        if (length < RTP_HEADER_SIZE)
+            return null;
+        byte[] header = Arrays.copyOfRange(packet, 0, RTP_HEADER_SIZE);
+        return RtpHeader.parseData(header, length);
     }
 
     @Nullable

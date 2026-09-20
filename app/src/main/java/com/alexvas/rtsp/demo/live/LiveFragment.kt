@@ -17,6 +17,7 @@ import androidx.constraintlayout.widget.ConstraintSet
 import androidx.core.net.toUri
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
+import com.alexvas.rtsp.RtspClient
 import com.alexvas.rtsp.codec.VideoDecodeThread
 import com.alexvas.rtsp.demo.databinding.FragmentLiveBinding
 import com.alexvas.rtsp.widget.RtspDataListener
@@ -52,6 +53,8 @@ class LiveFragment : Fragment() {
                     cbAudio.isEnabled = false
                     cbApplication.isEnabled = false
                     cbDebug.isEnabled = false
+                    rbTransportTcp.isEnabled = false
+                    rbTransportUdp.isEnabled = false
                 }
                 tgRotation.isEnabled = false
             }
@@ -86,6 +89,8 @@ class LiveFragment : Fragment() {
                     cbAudio.isEnabled = true
                     cbApplication.isEnabled = true
                     cbDebug.isEnabled = true
+                    rbTransportTcp.isEnabled = true
+                    rbTransportUdp.isEnabled = true
                     etRtspRequest.isEnabled = true
                     etRtspUsername.isEnabled = true
                     etRtspPassword.isEnabled = true
@@ -222,6 +227,9 @@ class LiveFragment : Fragment() {
         }
     }
 
+    private fun getSelectedTransport(): RtspClient.Transport =
+        if (binding.llRtspParams.rbTransportUdp.isChecked) RtspClient.Transport.UDP else RtspClient.Transport.TCP
+
     private fun getSnapshot(): Bitmap? {
         if (DEBUG) Log.v(TAG, "getSnapshot()")
         val surfaceBitmap = Bitmap.createBitmap(
@@ -341,7 +349,8 @@ class LiveFragment : Fragment() {
                         uri,
                         username = liveViewModel.rtspUsername.value,
                         password = liveViewModel.rtspPassword.value,
-                        userAgent = "rtsp-client-android"
+                        userAgent = "rtsp-client-android",
+                        transport = getSelectedTransport()
                     )
                     debug = binding.llRtspParams.cbDebug.isChecked
                     videoFrameRateStabilization = binding.cbVideoFpsStabilization.isChecked
@@ -366,7 +375,8 @@ class LiveFragment : Fragment() {
                         uri,
                         username = liveViewModel.rtspUsername.value,
                         password = liveViewModel.rtspPassword.value,
-                        userAgent = "rtsp-client-android"
+                        userAgent = "rtsp-client-android",
+                        transport = getSelectedTransport()
                     )
                     debug = binding.llRtspParams.cbDebug.isChecked
                     onRtspImageBitmapListener = object : RtspImageView.RtspImageBitmapListener {

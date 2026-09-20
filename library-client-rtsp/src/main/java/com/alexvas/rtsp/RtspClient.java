@@ -17,17 +17,25 @@ import com.alexvas.rtsp.parser.RtpH264Parser;
 import com.alexvas.rtsp.parser.RtpH265Parser;
 import com.alexvas.rtsp.parser.RtpHeaderParser;
 import com.alexvas.rtsp.parser.RtpParser;
+import com.alexvas.rtsp.parser.RtpVideoPacketAssembler;
 import com.alexvas.rtsp.srtp.SrtpCryptoContext;
 import com.alexvas.utils.NetUtils;
 import com.alexvas.utils.VideoCodecUtils;
 
 import java.io.BufferedOutputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.Serial;
 import java.math.BigInteger;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.SocketException;
+import java.nio.ByteBuffer;
+import java.nio.channels.DatagramChannel;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
@@ -154,6 +162,14 @@ public class RtspClient {
         return (capabilitiesMask & capability) != 0;
     }
 
+    /** RTP/RTCP data transport used for SETUP/media delivery. */
+    public enum Transport {
+        /** RTP interleaved over the RTSP TCP connection itself (RFC 2326 §10.12). */
+        TCP,
+        /** RTP/RTCP delivered over dedicated UDP ports (RFC 2326 §C.1.1). */
+        UDP,
+    }
+
     public interface RtspClientListener {
         void onRtspConnecting();
         void onRtspConnected(@NonNull SdpInfo sdpInfo);
@@ -251,6 +267,11 @@ public class RtspClient {
     // Size of buffer for reading from the connection
     private final static int MAX_LINE_SIZE = 4098;
 
+    // Requested SO_RCVBUF for UDP RTP sockets. Generous on purpose: it only reserves kernel
+    // memory, and a too-small buffer is what turns a brief processing stall into dropped (and
+    // therefore visibly corrupted) video packets.
+    private final static int UDP_RTP_RECEIVE_BUFFER_SIZE = 1024 * 1024;
+
     private static class UnauthorizedException extends IOException {
         UnauthorizedException() {
             super("Unauthorized");
@@ -275,6 +296,7 @@ public class RtspClient {
     private final @Nullable String username;
     private final @Nullable String password;
     private final @Nullable String userAgent;
+    private final @NonNull Transport transport;
 
     private RtspClient(@NonNull RtspClient.Builder builder) {
         rtspSocket = builder.rtspSocket;
@@ -289,11 +311,15 @@ public class RtspClient {
         password = builder.password;
         debug = builder.debug;
         userAgent = builder.userAgent;
+        transport = builder.transport;
     }
 
     public void execute() {
         if (DEBUG) Log.v(TAG, "execute()");
         listener.onRtspConnecting();
+        // Only populated (indices 0=video, 1=audio, 2=application) when transport == UDP.
+        final DatagramChannel[] udpRtpChannels = new DatagramChannel[3];
+        final DatagramSocket[] udpRtcpSockets = new DatagramSocket[3];
         try {
             final InputStream inputStream = rtspSocket.getInputStream();
             final OutputStream outputStream = debug ?
@@ -459,6 +485,35 @@ public class RtspClient {
                         Log.e(TAG, "Failed to get RTSP URI for SETUP");
                         continue;
                     }
+
+                    String transportHeader;
+                    if (transport == Transport.UDP) {
+                        udpRtcpSockets[i] = new DatagramSocket(null);
+                        udpRtcpSockets[i].setReuseAddress(true);
+                        udpRtcpSockets[i].bind(new InetSocketAddress(0));
+
+                        udpRtpChannels[i] = DatagramChannel.open();
+                        udpRtpChannels[i].configureBlocking(false);
+                        DatagramSocket rtpSocket = udpRtpChannels[i].socket();
+                        rtpSocket.setReuseAddress(true);
+                        // Bursty video can otherwise overflow the OS's default receive buffer
+                        // between two select() calls, causing self-inflicted packet loss (and
+                        // therefore corrupted frames) even on an otherwise clean network. Must
+                        // be set before bind() to take effect.
+                        try {
+                            rtpSocket.setReceiveBufferSize(UDP_RTP_RECEIVE_BUFFER_SIZE);
+                        } catch (SocketException e) {
+                            Log.w(TAG, "Failed to enlarge UDP RTP receive buffer", e);
+                        }
+                        rtpSocket.bind(new InetSocketAddress(0));
+
+                        transportHeader = "RTP/AVP/UDP;unicast;client_port="
+                                + udpRtpChannels[i].socket().getLocalPort() + "-"
+                                + udpRtcpSockets[i].getLocalPort();
+                    } else {
+                        transportHeader = "RTP/AVP/TCP;unicast;interleaved=" + (i == 0 ? "0-1" /*video*/ : "2-3" /*audio*/);
+                    }
+
                     if (digestRealmNonce != null)
                         authToken = getDigestAuthHeader(
                                 username,
@@ -474,13 +529,43 @@ public class RtspClient {
                             userAgent,
                             authToken,
                             session,
-                            (i == 0 ? "0-1" /*video*/ : "2-3" /*audio*/));
+                            transportHeader);
                     status = readResponseStatusCode(inputStream);
                     if (DEBUG)
                         Log.i(TAG, "SETUP status: " + status);
                     checkStatusCode(status);
                     headers = readResponseHeaders(inputStream);
                     dumpHeaders(headers);
+
+                    if (transport == Transport.UDP) {
+                        Pair<Integer, Integer> serverPorts = getHeaderTransportServerPort(headers);
+                        if (serverPorts == null)
+                            throw new IOException("RTSP server did not return an UDP server_port for SETUP");
+                        String source = getHeaderTransportSource(headers);
+                        InetAddress serverAddress = null;
+                        if (source != null) {
+                            try {
+                                serverAddress = InetAddress.getByName(source);
+                            } catch (Exception e) {
+                                Log.w(TAG, "Failed to resolve Transport 'source' address \"" + source + "\", falling back to RTSP server address");
+                            }
+                        }
+                        if (serverAddress == null)
+                            serverAddress = rtspSocket.getInetAddress();
+                        // Locking the channel to the server address makes the kernel drop any
+                        // packet not sent by it (basic protection against off-path UDP spoofing),
+                        // and lets us use read()/write() instead of receive()/send().
+                        udpRtpChannels[i].connect(new InetSocketAddress(serverAddress, serverPorts.first));
+                        // Send a single byte to punch a hole through any NAT/firewall between us
+                        // and the server, and to give the server our actual reachable address in
+                        // case it differs from the client_port we asked for above.
+                        try {
+                            udpRtpChannels[i].write(ByteBuffer.wrap(new byte[]{0}));
+                        } catch (IOException e) {
+                            Log.w(TAG, "Failed to send UDP NAT punch packet", e);
+                        }
+                    }
+
                     session = getHeader(headers, "Session");
                     if (!TextUtils.isEmpty(session)) {
                         // ODgyODg3MjQ1MDczODk3NDk4Nw;timeout=30
@@ -554,23 +639,40 @@ public class RtspClient {
                         else
                             sendOptionsCommand(outputStream, uriRtsp, cSeq.addAndGet(1), userAgent, authTokenFinal);
 
-                        // Do not read response right now, since it may contain unread RTP frames.
-                        // RtpHeader.searchForNextRtpHeader will handle that.
+                        if (transport == Transport.UDP) {
+                            // Unlike TCP-interleaved mode, RTP data never shares this connection,
+                            // so the response is safe (and necessary) to read right away -
+                            // otherwise it just piles up unread in the socket's receive buffer
+                            // for the life of the stream.
+                            readResponseStatusCode(inputStream);
+                            readResponseHeaders(inputStream);
+                        }
+                        // Else do not read response right now, since it may contain unread RTP
+                        // frames. RtpHeader.searchForNextRtpHeader will handle that.
                     } catch (IOException e) {
                         e.printStackTrace();
                     }
                 };
 
+                RtpPacketReader reader = (transport == Transport.UDP)
+                        ? new UdpRtpPacketReader(udpRtpChannels, exitFlag)
+                        : new TcpRtpPacketReader(inputStream);
                 // Blocking call unless exitFlag set to true, thread.interrupt() called or connection closed.
                 try {
                     readRtpData(
-                            inputStream,
+                            reader,
                             sdpInfo,
                             exitFlag,
                             listener,
                             sessionTimeout / 2 * 1000,
                             keepAliveListener);
                 } finally {
+                    if (reader instanceof Closeable closeable) {
+                        try {
+                            closeable.close();
+                        } catch (IOException ignored) {
+                        }
+                    }
                     // Cleanup resources on server side
                     if (hasCapability(RTSP_CAPABILITY_TEARDOWN, capabilities)) {
                         if (digestRealmNonce != null)
@@ -600,6 +702,19 @@ public class RtspClient {
             rtspSocket.close();
         } catch (IOException e) {
             e.printStackTrace();
+        }
+        for (DatagramChannel channel : udpRtpChannels) {
+            if (channel != null) {
+                try {
+                    channel.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+        for (DatagramSocket socket : udpRtcpSockets) {
+            if (socket != null)
+                socket.close();
         }
     }
 
@@ -644,7 +759,7 @@ public class RtspClient {
     }
 
     private static void readRtpData(
-            @NonNull InputStream inputStream,
+            @NonNull RtpPacketReader reader,
             @NonNull SdpInfo sdpInfo,
             @NonNull AtomicBoolean exitFlag,
             @NonNull RtspClientListener listener,
@@ -673,7 +788,7 @@ public class RtspClient {
         byte[] nalUnitPps = (sdpInfo.videoTrack != null ? sdpInfo.videoTrack.pps : null);
         byte[] nalUnitSei = EMPTY_ARRAY;
         byte[] nalUnitAud = EMPTY_ARRAY;
-        int videoSeqNum = 0;
+        final RtpVideoPacketAssembler videoAssembler = new RtpVideoPacketAssembler(videoParser);
 
         final SrtpCryptoContext videoSrtpContext = createSrtpContext(sdpInfo.videoTrack);
         final SrtpCryptoContext audioSrtpContext = createSrtpContext(sdpInfo.audioTrack);
@@ -682,7 +797,7 @@ public class RtspClient {
         long keepAliveSent = System.currentTimeMillis();
 
         while (!exitFlag.get()) {
-            RtpHeaderParser.RtpHeader header = RtpHeaderParser.readHeader(inputStream);
+            RtpHeaderParser.RtpHeader header = reader.readHeader();
             if (header == null) {
                 continue;
 //                throw new IOException("No RTP frames found");
@@ -691,7 +806,7 @@ public class RtspClient {
             if (header.payloadSize > data.length)
                 data = new byte[header.payloadSize];
 
-            NetUtils.readData(inputStream, data, 0, header.payloadSize);
+            reader.readPayload(data, 0, header.payloadSize);
 
             // Check if keep-alive should be sent
             long l = System.currentTimeMillis();
@@ -723,18 +838,17 @@ public class RtspClient {
 
             // Video
             if (sdpInfo.videoTrack != null && header.payloadType == sdpInfo.videoTrack.payloadType) {
-                if (videoSeqNum > header.sequenceNumber)
-                    Log.w(TAG, "Invalid video seq num " + videoSeqNum + "/" + header.sequenceNumber);
-                videoSeqNum = header.sequenceNumber;
-
                 byte[] nalUnit;
-                // If extendion bit set in header, skip extension data
+                // Skip extension bytes, validating against the received packet, not buffer capacity.
                 if (header.extension == 1) {
+                    if (header.payloadSize < 4) continue;
                     int skipBytes = ((data[2] & 0xFF) << 8 | (data[3] & 0xFF)) * 4 + 4;
-                    nalUnit = videoParser.processRtpPacketAndGetNalUnit(Arrays.copyOfRange(data, skipBytes, data.length),
-                            header.payloadSize - skipBytes, header.marker == 1);
+                    if (skipBytes >= header.payloadSize) continue;
+                    nalUnit = videoAssembler.process(header,
+                            Arrays.copyOfRange(data, skipBytes, header.payloadSize),
+                            header.payloadSize - skipBytes);
                 } else {
-                    nalUnit = videoParser.processRtpPacketAndGetNalUnit(data, header.payloadSize, header.marker == 1);
+                    nalUnit = videoAssembler.process(header, data, header.payloadSize);
                 }
 
                 if (nalUnit != null && sdpInfo.videoTrack.videoCodec == VIDEO_CODEC_AV1) {
@@ -942,11 +1056,11 @@ public class RtspClient {
             @Nullable String userAgent,
             @Nullable String authToken,
             @Nullable String session,
-            @NonNull String interleaved)
+            @NonNull String transportHeader)
     throws IOException {
         if (DEBUG) Log.v(TAG, "sendSetupCommand(request=\"" + request + "\", cSeq=" + cSeq + ")");
         outputStream.write(("SETUP " + request + " RTSP/1.0" + CRLF).getBytes());
-        outputStream.write(("Transport: RTP/AVP/TCP;unicast;interleaved=" + interleaved + CRLF).getBytes());
+        outputStream.write(("Transport: " + transportHeader + CRLF).getBytes());
         if (authToken != null)
             outputStream.write(("Authorization: " + authToken + CRLF).getBytes());
         outputStream.write(("CSeq: " + cSeq + CRLF).getBytes());
@@ -1424,6 +1538,46 @@ public class RtspClient {
         return null;
     }
 
+    /**
+     * Parses the "server_port=&lt;rtp&gt;-&lt;rtcp&gt;" parameter out of a SETUP response's
+     * Transport header, e.g. "RTP/AVP;unicast;destination=10.0.1.53;source=10.0.1.145;
+     * client_port=27452-27453;server_port=6972-6973".
+     */
+    @Nullable
+    private static Pair<Integer, Integer> getHeaderTransportServerPort(@NonNull ArrayList<Pair<String, String>> headers) {
+        String transportValue = getHeader(headers, "Transport");
+        if (TextUtils.isEmpty(transportValue))
+            return null;
+        for (String token : TextUtils.split(transportValue, ";")) {
+            token = token.trim();
+            if (token.startsWith("server_port=")) {
+                String[] ports = TextUtils.split(token.substring("server_port=".length()), "-");
+                if (ports.length == 2) {
+                    try {
+                        return Pair.create(Integer.parseInt(ports[0]), Integer.parseInt(ports[1]));
+                    } catch (NumberFormatException e) {
+                        Log.e(TAG, "Failed to parse Transport server_port \"" + token + "\"");
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Parses the "source=&lt;ip&gt;" parameter out of a SETUP response's Transport header, if present. */
+    @Nullable
+    private static String getHeaderTransportSource(@NonNull ArrayList<Pair<String, String>> headers) {
+        String transportValue = getHeader(headers, "Transport");
+        if (TextUtils.isEmpty(transportValue))
+            return null;
+        for (String token : TextUtils.split(transportValue, ";")) {
+            token = token.trim();
+            if (token.startsWith("source="))
+                return token.substring("source=".length());
+        }
+        return null;
+    }
+
     private static int getHeaderContentLength(@NonNull ArrayList<Pair<String, String>> headers) {
         String length = getHeader(headers, "content-length");
         if (!TextUtils.isEmpty(length)) {
@@ -1733,6 +1887,7 @@ public class RtspClient {
         private @Nullable String username = null;
         private @Nullable String password = null;
         private @Nullable String userAgent = DEFAULT_USER_AGENT;
+        private @NonNull Transport transport = Transport.TCP;
 
         public Builder(
                 @NonNull Socket rtspSocket,
@@ -1755,6 +1910,13 @@ public class RtspClient {
         public Builder withCredentials(@Nullable String username, @Nullable String password) {
             this.username = username;
             this.password = password;
+            return this;
+        }
+
+        /** RTP/RTCP transport to request in SETUP. Defaults to {@link Transport#TCP} (interleaved). */
+        @NonNull
+        public Builder withTransport(@NonNull Transport transport) {
+            this.transport = transport;
             return this;
         }
 

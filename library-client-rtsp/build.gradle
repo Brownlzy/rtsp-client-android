@@ -41,9 +41,14 @@ android {
     }
 
     namespace 'com.alexvas.rtsp'
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
 }
 
 dependencies {
+    testImplementation 'junit:junit:4.13.2'
     implementation 'androidx.annotation:annotation:1.10.0'
     implementation 'androidx.media3:media3-exoplayer:1.11.0'
     implementation 'androidx.camera:camera-core:1.6.2' // YUV -> BMP conversion

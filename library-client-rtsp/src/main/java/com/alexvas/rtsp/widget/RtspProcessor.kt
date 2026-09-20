@@ -52,6 +52,7 @@ class RtspProcessor(
     private var requestVideo = true
     private var requestAudio = true
     private var requestApplication = false
+    private var transport = RtspClient.Transport.TCP
     private var rtspThread: RtspThread? = null
     private var videoFrameQueue = VideoFrameQueue(60)
     private var audioFrameQueue = AudioFrameQueue(10)
@@ -388,6 +389,7 @@ class RtspProcessor(
                     .withDebug(debug)
                     .withUserAgent(userAgent)
                     .withCredentials(username, password)
+                    .withTransport(transport)
                     .build()
                 rtspClient.execute()
             } catch (e: Exception) {
@@ -468,13 +470,21 @@ class RtspProcessor(
 //        uiHandler.post { statusListener?.onRtspStatusDisconnected() }
     }
 
-    fun init(uri: Uri, username: String?, password: String?, userAgent: String? = null, socketTimeout: Int = DEFAULT_SOCKET_TIMEOUT) {
-        if (DEBUG) Log.v(TAG, "init(uri='$uri', username='$username', password='$password', userAgent='$userAgent', socketTimeout=$socketTimeout)")
+    fun init(
+        uri: Uri,
+        username: String?,
+        password: String?,
+        userAgent: String? = null,
+        socketTimeout: Int = DEFAULT_SOCKET_TIMEOUT,
+        transport: RtspClient.Transport = RtspClient.Transport.TCP,
+    ) {
+        if (DEBUG) Log.v(TAG, "init(uri='$uri', username='$username', password='$password', userAgent='$userAgent', socketTimeout=$socketTimeout, transport=$transport)")
         this.uri = uri
         this.username = username
         this.password = password
         this.userAgent = userAgent
         this.socketTimeoutMsec = socketTimeout
+        this.transport = transport
     }
 
     fun start(requestVideo: Boolean, requestAudio: Boolean, requestApplication: Boolean = false) {

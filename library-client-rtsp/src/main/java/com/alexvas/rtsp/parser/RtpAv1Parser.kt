@@ -110,6 +110,13 @@ class RtpAv1Parser : RtpParser() {
         return result
     }
 
+    override fun reset() {
+        if (DEBUG) Log.v(TAG, "reset()")
+        super.reset()
+        temporalUnit = ByteArrayOutputStream()
+        fragment = null
+    }
+
     /** Reads a leb128-encoded value. Returns (value, offset right after it) or null if malformed. */
     private fun readLeb128(data: ByteArray, offset: Int, limit: Int): Pair<Long, Int>? {
         var value = 0L
