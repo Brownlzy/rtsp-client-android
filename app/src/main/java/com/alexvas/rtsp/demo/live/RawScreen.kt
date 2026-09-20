@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.rememberNestedScrollInteropConnection
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -66,6 +67,8 @@ fun RawScreen(liveViewModel: LiveViewModel) {
     var passwordVisible by remember { mutableStateOf(false) }
     val player = remember { RawPlayerState() }
     var pendingStart by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val localNetworkPermissionDenied =
+        stringResource(R.string.local_network_permission_denied)
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -76,7 +79,7 @@ fun RawScreen(liveViewModel: LiveViewModel) {
                 start?.invoke()
             }
         } else {
-            player.showError(context.getString(R.string.local_network_permission_denied))
+            player.showError(localNetworkPermissionDenied)
         }
     }
 
